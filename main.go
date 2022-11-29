@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/binary"
 	"image"
 	"image/jpeg"
 	"image/png"
@@ -72,11 +75,75 @@ func main() {
 	draw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
 
 	// write
+	// ICO encode flow: https://github.com/biessek/golang-ico/blob/master/writer.go
+	pngBuffer := new(bytes.Buffer)
+	pngWriter := bufio.NewWriter(pngBuffer)
+
+	// write prepared icon to writer
+	err = png.Encode(pngWriter, dst)
+	if err != nil {
+		log.Panicln(err)
+	}
+	err = pngWriter.Flush() // clear
+	if err != nil {
+		log.Panicln(err)
+	}
+
+	// prepare byte buffer
+	byteBuffer := new(bytes.Buffer)
+	err = binary.Write(
+		byteBuffer,
+		binary.LittleEndian,
+		struct {
+			Zero   uint16
+			Type   uint16
+			Number uint16
+		}{
+			0, 1, 1,
+		})
+	if err != nil {
+		log.Panicln(err)
+	}
+
+	err = binary.Write(
+		byteBuffer,
+		binary.LittleEndian,
+		struct {
+			Width   byte
+			Height  byte
+			Palette byte
+			_       byte
+			Plane   uint16
+			Bits    uint16
+			Size    uint32
+			Offset  uint32
+		}{
+			Width:  uint8(dst.Bounds().Dx()),
+			Height: uint8(dst.Bounds().Dy()),
+			Plane:  1,
+			Bits:   32,
+			Size:   uint32(len(pngBuffer.Bytes())),
+			Offset: 22,
+		},
+	)
+	if err != nil {
+		log.Panicln(err)
+	}
+
+	// create output file, overwrite if exists
 	output, err := os.Create(outFile)
 	if err != nil {
 		log.Panicln(err)
 	}
 	defer output.Close()
 
-	png.Encode(output, dst)
+	// write icon
+	_, err = output.Write(byteBuffer.Bytes())
+	if err != nil {
+		log.Panicln(err)
+	}
+	_, err = output.Write(pngBuffer.Bytes())
+	if err != nil {
+		log.Panicln(err)
+	}
 }
